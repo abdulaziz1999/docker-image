@@ -1,0 +1,94 @@
+FROM webdevops/php-nginx:8.4
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+COPY conf/ /opt/docker/
+
+# Add nginx key
+RUN curl -s https://nginx.org/keys/nginx_signing.key | apt-key add -
+
+# Update apt
+RUN apt-get update -q
+
+# Set timezone Asia/Jakarta
+RUN ln -sf /usr/share/zoneinfo/Asia/Jakarta /etc/localtime
+
+# Set locale id_ID
+RUN apt-get install -qq locales && \
+    sed -i -e 's/# id_ID.UTF-8 UTF-8/id_ID.UTF-8 UTF-8/' /etc/locale.gen && \
+    dpkg-reconfigure locales && \
+    update-locale LANG=id_ID.UTF-8
+ENV LANG=id_ID.UTF-8
+
+# Upgrade OpenSSL (for older clients)
+RUN apt-get install -qq --no-install-recommends openssl && \
+    sed -i 's,^\(MinProtocol[ ]*=\).*,\1TLSv1.0,g' /etc/ssl/openssl.cnf && \
+    sed -i 's,^\(CipherString[ ]*=\).*,\1DEFAULT@SECLEVEL=1,g' /etc/ssl/openssl.cnf
+
+# Install Composer
+ENV COMPOSER_ALLOW_SUPERUSER=1
+COPY --from=composer:2.7 /usr/bin/composer /usr/bin/composer
+
+# Install wkhtmltopdf dependencies
+RUN apt-get install -qq \
+    xvfb \
+    xauth \
+    xfonts-base \
+    xfonts-75dpi \
+    fontconfig \
+    libssl3 \
+    libjpeg62-turbo \
+    libxrender1 \
+    wget
+
+# Install basic tools
+RUN apt-get install -qq \
+    iproute2 \
+    git \
+    zip \
+    unzip
+
+# Install SQL Server ODBC drivers
+RUN apt-get install -qq \
+    apt-transport-https \
+    gnupg2 && \
+    curl https://packages.microsoft.com/keys/microsoft.asc | apt-key add - && \
+    curl https://packages.microsoft.com/config/debian/11/prod.list > /etc/apt/sources.list.d/mssql-release.list && \
+    apt-get update -qq
+
+RUN ACCEPT_EULA=Y apt-get install -qq \
+    msodbcsql17 \
+    libgss3 \
+    odbcinst \
+    unixodbc \
+    unixodbc-dev
+
+# Install sqlsrv and pdo_sqlsrv for PHP 8.4 (use latest compatible version)
+RUN pecl install sqlsrv-5.12.0 \
+    && pecl install pdo_sqlsrv-5.12.0 \
+    && docker-php-ext-enable sqlsrv pdo_sqlsrv
+
+# Install Oracle Instant Client (OCI8)
+RUN apt-get install -qq libaio1
+COPY instantclient19/ /tmp/instantclient
+RUN cd /tmp/instantclient && \
+    unzip -qo '*.zip' -d /opt/oracle && \
+    ln -s /opt/oracle/instantclient_19_28 /usr/local/instantclient && \
+    cd /usr/local/instantclient && \
+    if [ ! -f libclntsh.so ]; then \
+        ln -s libclntsh.so.19.* libclntsh.so; \
+    fi && \
+    ln -s /usr/local/instantclient/lib* /usr/lib && \
+    echo 'export LD_LIBRARY_PATH="/usr/local/instantclient"' >> /root/.bashrc && \
+    echo 'instantclient,/usr/local/instantclient' | pecl install oci8 && \
+    docker-php-ext-enable oci8 && \
+    rm -rf /tmp/instantclient
+
+# Enable PDO extensions (ODBC, Oracle)
+RUN docker-php-ext-configure pdo_odbc --with-pdo-odbc=unixODBC,/usr
+RUN docker-php-ext-install -j$(nproc) pdo_odbc pdo
+
+# Clean up
+RUN rm -rf /var/lib/apt/lists/*
+
+ENV DEBIAN_FRONTEND=dialog

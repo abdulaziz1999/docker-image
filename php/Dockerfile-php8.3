@@ -108,4 +108,5 @@ RUN docker-php-ext-install -j$(nproc) \
 
 # clean apt
 RUN rm -rf /var/lib/apt/lists/*
+
 ENV DEBIAN_FRONTEND=dialog

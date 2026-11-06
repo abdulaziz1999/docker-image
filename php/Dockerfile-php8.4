@@ -29,18 +29,6 @@ RUN apt-get install -qq --no-install-recommends openssl && \
 ENV COMPOSER_ALLOW_SUPERUSER=1
 COPY --from=composer:2.7 /usr/bin/composer /usr/bin/composer
 
-# Install wkhtmltopdf dependencies
-RUN apt-get install -qq \
-    xvfb \
-    xauth \
-    xfonts-base \
-    xfonts-75dpi \
-    fontconfig \
-    libssl3 \
-    libjpeg62-turbo \
-    libxrender1 \
-    wget
-
 # Install basic tools
 RUN apt-get install -qq \
     iproute2 \

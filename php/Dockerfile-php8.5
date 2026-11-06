@@ -1,0 +1,57 @@
+FROM webdevops/php-nginx:8.5
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+COPY conf/ /opt/docker/
+
+# 1. Sinkronisasi zona waktu
+RUN apt-get update -q && \
+    apt-get install -qq -y tzdata && \
+    ln -sf /usr/share/zoneinfo/Asia/Jakarta /etc/localtime && \
+    echo "Asia/Jakarta" > /etc/timezone
+
+# 2. Set locale id_ID
+RUN apt-get install -qq -y locales && \
+    sed -i -e 's/# id_ID.UTF-8 UTF-8/id_ID.UTF-8 UTF-8/' /etc/locale.gen && \
+    dpkg-reconfigure locales && \
+    update-locale LANG=id_ID.UTF-8
+ENV LANG=id_ID.UTF-8
+
+# 3. Upgrade OpenSSL (for older clients)
+RUN apt-get install -qq -y --no-install-recommends openssl && \
+    sed -i 's,^\(MinProtocol*=\).*,\1TLSv1.0,g' /etc/ssl/openssl.cnf && \
+    sed -i 's,^\(CipherString*=\).*,\1DEFAULT@SECLEVEL=1,g' /etc/ssl/openssl.cnf
+
+# 4. Install Composer
+ENV COMPOSER_ALLOW_SUPERUSER=1
+COPY --from=composer:2.7 /usr/bin/composer /usr/bin/composer
+
+# 5. Install basic tools (iproute2)
+RUN apt-get install -qq -y git zip unzip wget iproute2 || apt-get install -qq -y git zip unzip wget
+
+# 6. Install dependensi Oracle (libaio1t64 untuk Debian 12 Bookworm)
+RUN apt-get update -q && \
+    apt-get install -qq -y libaio1t64 || apt-get install -qq -y libaio1 || apt-get install -qq -y libaio-dev
+
+# 7. Proses Ekstraksi & Kompilasi Oracle Instant Client (OCI8)
+COPY instantclient19/ /tmp/instantclient
+RUN cd /tmp/instantclient && \
+    unzip -qo '*.zip' -d /opt/oracle && \
+    ln -s /opt/oracle/instantclient_19_28 /usr/local/instantclient && \
+    cd /usr/local/instantclient && \
+    if [ ! -f libclntsh.so ]; then \
+        ln -s libclntsh.so.19.* libclntsh.so; \
+    fi && \
+    ln -s /usr/local/instantclient/lib* /usr/lib && \
+    echo 'export LD_LIBRARY_PATH="/usr/local/instantclient"' >> /root/.bashrc && \
+    echo 'instantclient,/usr/local/instantclient' | pecl install oci8 && \
+    docker-php-ext-enable oci8 && \
+    rm -rf /tmp/instantclient
+
+# 8. Enable PDO extensions
+RUN docker-php-ext-install -j$(nproc) pdo
+
+# 9. Clean up
+RUN rm -rf /var/lib/apt/lists/*
+
+ENV DEBIAN_FRONTEND=dialog
